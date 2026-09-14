@@ -1,33 +1,78 @@
 import NetworkExtension
+import Darwin
 
 /// System VPN entry point. Bridges the device's IP packets to the OpenFlux Go
 /// tun2socks stack (TCP forwarded through the transport; DNS proxied over TCP).
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
-    /// Networks that must NOT go through the tunnel: the Yandex backend the
-    /// transport talks to, plus the DoT DNS resolvers. Otherwise the
-    /// extension's own traffic loops back into itself.
-    static let bypassRoutes: [NEIPv4Route] = {
-        let cidrs: [(String, String)] = [
-            ("5.45.192.0", "255.255.192.0"),
-            ("5.255.192.0", "255.255.192.0"),
-            ("37.9.64.0", "255.255.192.0"),
-            ("37.140.128.0", "255.255.192.0"),
-            ("77.88.0.0", "255.255.192.0"),
-            ("84.201.128.0", "255.255.192.0"),
-            ("87.250.224.0", "255.255.224.0"),
-            ("90.156.176.0", "255.255.252.0"),
-            ("93.158.128.0", "255.255.192.0"),
-            ("95.108.128.0", "255.255.128.0"),
-            ("100.43.64.0", "255.255.224.0"),
-            ("178.154.128.0", "255.255.128.0"),
-            ("213.180.192.0", "255.255.224.0"),
-            // DoT DNS resolvers used by the Go client.
-            ("8.8.8.8", "255.255.255.255"),
-            ("1.1.1.1", "255.255.255.255"),
-        ]
+    /// DoT DNS resolvers used by the Go client — always excluded regardless
+    /// of transport, otherwise DNS-over-TLS lookups loop back into the tunnel.
+    static let dnsBypassCIDRs: [(String, String)] = [
+        ("8.8.8.8", "255.255.255.255"),
+        ("1.1.1.1", "255.255.255.255"),
+    ]
+
+    /// Yandex backend ranges the yandex/vyandex transports talk to.
+    static let yandexBypassCIDRs: [(String, String)] = [
+        ("5.45.192.0", "255.255.192.0"),
+        ("5.255.192.0", "255.255.192.0"),
+        ("37.9.64.0", "255.255.192.0"),
+        ("37.140.128.0", "255.255.192.0"),
+        ("77.88.0.0", "255.255.192.0"),
+        ("84.201.128.0", "255.255.192.0"),
+        ("87.250.224.0", "255.255.224.0"),
+        ("90.156.176.0", "255.255.252.0"),
+        ("93.158.128.0", "255.255.192.0"),
+        ("95.108.128.0", "255.255.128.0"),
+        ("100.43.64.0", "255.255.224.0"),
+        ("178.154.128.0", "255.255.128.0"),
+        ("213.180.192.0", "255.255.224.0"),
+    ]
+
+    /// Last-known-good IP for interview.cups.online, in case live resolution
+    /// (which needs the pre-tunnel network path) fails for some reason.
+    static let cupsOnlineFallbackIP = "95.163.40.140"
+
+    /// Resolves a hostname to its IPv4 addresses using the network path that
+    /// exists *before* setTunnelNetworkSettings takes over routing. Must be
+    /// called before the tunnel's own routes are installed.
+    private func resolveIPv4(_ host: String) -> [String] {
+        var hints = addrinfo(ai_flags: 0, ai_family: AF_INET, ai_socktype: SOCK_STREAM,
+                              ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+        var resultPtr: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &resultPtr) == 0, let first = resultPtr else { return [] }
+        defer { freeaddrinfo(first) }
+
+        var ips: [String] = []
+        var ptr: UnsafeMutablePointer<addrinfo>? = first
+        while let p = ptr {
+            if let sa = p.pointee.ai_addr {
+                var addr = sockaddr_in()
+                memcpy(&addr, sa, Int(p.pointee.ai_addrlen))
+                if let cstr = inet_ntoa(addr.sin_addr) {
+                    ips.append(String(cString: cstr))
+                }
+            }
+            ptr = p.pointee.ai_next
+        }
+        return ips
+    }
+
+    /// Networks that must NOT go through the tunnel for the given transport
+    /// (its own backend, resolved fresh) plus the DoT DNS resolvers.
+    /// Otherwise the extension's own traffic loops back into itself.
+    private func bypassRoutes(for transport: String) -> [NEIPv4Route] {
+        var cidrs = Self.dnsBypassCIDRs
+        switch transport {
+        case "cupsonline":
+            var ips = Set(resolveIPv4("interview.cups.online"))
+            ips.insert(Self.cupsOnlineFallbackIP)
+            cidrs.append(contentsOf: ips.map { ($0, "255.255.255.255") })
+        default:
+            cidrs.append(contentsOf: Self.yandexBypassCIDRs)
+        }
         return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
-    }()
+    }
 
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
@@ -47,7 +92,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Exclude the transport's own backend (Yandex ranges) and the DoT DNS
         // servers so the extension's own connections bypass the tunnel instead
         // of looping back into it.
-        ipv4.excludedRoutes = Self.bypassRoutes
+        ipv4.excludedRoutes = bypassRoutes(for: transport)
         settings.ipv4Settings = ipv4
         settings.mtu = 1500
         // A benign in-tunnel DNS address: queries to it are captured and
