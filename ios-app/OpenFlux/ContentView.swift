@@ -20,8 +20,9 @@ struct ContentView: View {
     private var canStart: Bool {
         guard (Int(socksPort) ?? 0) > 0 else { return false }
         switch transport {
-        case .yandex: return !docURL.trimmingCharacters(in: .whitespaces).isEmpty
-        case .max:    return !maxToken.isEmpty && !maxUid.isEmpty
+        case .yandex:     return !docURL.trimmingCharacters(in: .whitespaces).isEmpty
+        case .max:        return !maxToken.isEmpty && !maxUid.isEmpty
+        case .cupsonline: return !docURL.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
 
@@ -76,6 +77,10 @@ struct ContentView: View {
             field(title: "MAX token", placeholder: "auth token", text: $maxToken)
             field(title: "MAX user ID", placeholder: "numeric id", text: $maxUid,
                   keyboard: .numberPad)
+        case .cupsonline:
+            field(title: "Cups.online key",
+                  placeholder: "base64 key printed by the exit node",
+                  text: $docURL)
         }
     }
 

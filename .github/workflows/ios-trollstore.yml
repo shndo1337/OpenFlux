@@ -1,0 +1,71 @@
+name: iOS unsigned IPA (TrollStore)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: go mod download
+        run: go mod download
+
+      - name: Install xcodegen + ldid
+        run: brew install xcodegen ldid
+
+      - name: Build Go static library (arm64, iOS)
+        run: ./build_ios.sh
+
+      - name: Sync library into the app
+        run: |
+          mkdir -p ios-app/Lib
+          cp output/ios/liboflux.a ios-app/Lib/liboflux.a
+          cp output/ios/liboflux.h ios-app/Lib/liboflux.h
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Archive (unsigned)
+        working-directory: ios-app
+        run: |
+          rm -rf build/OpenFlux.xcarchive
+          xcodebuild -project OpenFlux.xcodeproj -scheme OpenFlux -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/OpenFlux.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean archive
+
+      - name: Ad-hoc sign with entitlements (ldid, for TrollStore)
+        working-directory: ios-app
+        run: |
+          APP="build/OpenFlux.xcarchive/Products/Applications/OpenFlux.app"
+          ldid -S"OpenFlux/OpenFlux.entitlements" "$APP/OpenFlux"
+          ldid -S"OpenFluxTunnel/OpenFluxTunnel.entitlements" "$APP/PlugIns/OpenFluxTunnel.appex/OpenFluxTunnel"
+
+      - name: Package IPA
+        working-directory: ios-app
+        run: |
+          APP="build/OpenFlux.xcarchive/Products/Applications/OpenFlux.app"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry OpenFluxCups-unsigned.ipa Payload
+          ls -lh OpenFluxCups-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenFluxCups-unsigned-ipa
+          path: ios-app/build/OpenFluxCups-unsigned.ipa
+          retention-days: 14

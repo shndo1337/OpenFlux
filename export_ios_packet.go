@@ -21,6 +21,7 @@ import (
 
 	"universal-bypass-tool/network"
 	"universal-bypass-tool/transport"
+	"universal-bypass-tool/transport/cupsonline"
 	"universal-bypass-tool/transport/oneme"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/utils"
@@ -80,6 +81,8 @@ func OpenFluxStartPacketTunnel(transportType, url, maxToken, maxUid *C.char) (rc
 	case "oneme":
 		uidint, _ := strconv.ParseInt(mUid, 10, 64)
 		t = transport.NewCompressedTransport(oneme.NewOneMeTransport(false, mToken, uidint, config))
+	case "cupsonline":
+		t = transport.NewCompressedTransport(cupsonline.NewCupsonlineTransport(docURL, config, true))
 	default:
 		return C.int(startBadTransport)
 	}

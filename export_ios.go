@@ -20,6 +20,7 @@ import (
 
 	"universal-bypass-tool/socks5"
 	"universal-bypass-tool/transport"
+	"universal-bypass-tool/transport/cupsonline"
 	"universal-bypass-tool/transport/oneme"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/tunnel"
@@ -171,6 +172,8 @@ func OpenFluxStartClient(transportType, url, socksAddr, maxToken, maxUid *C.char
 	case "oneme":
 		uidint, _ := strconv.ParseInt(mUid, 10, 64)
 		t = transport.NewCompressedTransport(oneme.NewOneMeTransport(false, mToken, uidint, config))
+	case "cupsonline":
+		t = transport.NewCompressedTransport(cupsonline.NewCupsonlineTransport(docURL, config, true))
 	default:
 		utils.Debugf("[BRIDGE] Unknown transport type: %s", tt)
 		return C.int(startBadTransport)

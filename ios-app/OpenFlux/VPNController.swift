@@ -11,7 +11,7 @@ final class VPNController: ObservableObject {
     @Published var active = false
 
     private var manager: NETunnelProviderManager?
-    private let extensionBundleId = "com.p1neapplexpress-saharev.openflux.tunnel"
+    private let extensionBundleId = "com.shndo1337.openfluxcups.tunnel"
 
     init() {
         NotificationCenter.default.addObserver(
