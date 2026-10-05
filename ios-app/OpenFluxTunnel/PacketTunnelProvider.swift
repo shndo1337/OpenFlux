@@ -62,7 +62,58 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
 
+    private var monitor: DispatchSourceTimer?
+    private var ticks = 0
+    private var lastUp: Bool?
+    private var everUp = false
+
+    private func footprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
+    }
+
+    /// Once a second: moves the Go core's log into the shared file, mirrors the
+    /// carrier state for the app and for iOS (reasserting), logs memory.
+    private func startMonitor() {
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "monitor"))
+        t.schedule(deadline: .now() + 1, repeating: 1)
+        t.setEventHandler { [weak self] in self?.tick() }
+        t.resume()
+        monitor = t
+    }
+
+    private func tick() {
+        ticks += 1
+        if let c = OpenFluxReadLog() {
+            let s = String(cString: c)
+            OpenFluxFreeString(c)
+            for line in s.split(separator: "\n") where !line.isEmpty {
+                SharedLog.write(String(line))
+            }
+        }
+        let up = OpenFluxPacketTunnelConnected() != 0
+        if up != lastUp {
+            lastUp = up
+            SharedLog.carrierUp = up
+            SharedLog.write("[EXT] carrier \(up ? "UP" : "DOWN")")
+            if up { everUp = true }
+            if everUp { reasserting = !up }
+        }
+        if ticks % 30 == 0 {
+            SharedLog.write(String(format: "[EXT] heartbeat carrier=%@ mem=%.1fMB",
+                                   up ? "up" : "down", footprintMB()))
+        }
+    }
+
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+        SharedLog.clear()
+        SharedLog.carrierUp = false
         let conf = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
         let transport = (conf["transport"] as? String) ?? "yandex"
         let url = (conf["url"] as? String) ?? ""
@@ -114,6 +165,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                 }
             }
+            SharedLog.write("[EXT] start transport=\(transport) rc=\(rc) encrypted=\(!secret.isEmpty)")
             if rc != 0 {
                 completionHandler(NSError(domain: "OpenFlux", code: Int(rc),
                     userInfo: [NSLocalizedDescriptionKey: "start failed (\(rc))"]))
@@ -121,11 +173,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.startReadLoop()
             self.startWriteLoop()
+            self.startMonitor()
             completionHandler(nil)
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        SharedLog.write("[EXT] stopTunnel reason=\(reason.rawValue) mem=\(Int(footprintMB()))MB")
+        SharedLog.carrierUp = false
+        monitor?.cancel()
+        monitor = nil
         OpenFluxStopPacketTunnel()
         completionHandler()
     }
@@ -157,6 +214,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 let data = Data(bytes: buf, count: Int(n))
                 self.packetFlow.writePackets([data], withProtocols: [NSNumber(value: AF_INET)])
             }
+            SharedLog.write("[EXT] write loop ended")
         }
     }
 }

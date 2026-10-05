@@ -13,6 +13,9 @@ struct ContentView: View {
     @AppStorage("socksPort") private var socksPort: String = "10808"
     @AppStorage("debugLog") private var debugLog: Bool = false
     @State private var showInfo = false
+    @State private var extLog = ""
+    @State private var carrierUp = false
+    @State private var extTimer: Timer?
 
     private var transport: TransportKind {
         TransportKind(rawValue: transportRaw) ?? .yandex
@@ -53,7 +56,15 @@ struct ContentView: View {
                 .padding()
             }
             .navigationTitle("OpenFlux")
-            .onAppear { OpenFluxSetDebug(debugLog ? 1 : 0) }
+            .onAppear {
+                OpenFluxSetDebug(debugLog ? 1 : 0)
+                refreshExtension()
+                extTimer?.invalidate()
+                extTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                    refreshExtension()
+                }
+            }
+            .onDisappear { extTimer?.invalidate() }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showInfo = true } label: {
@@ -175,12 +186,30 @@ struct ContentView: View {
         }
     }
 
+    private func refreshExtension() {
+        extLog = SharedLog.read()
+        carrierUp = SharedLog.carrierUp
+    }
+
+    private var headerState: (color: Color, text: String) {
+        if vpn.active {
+            if vpn.status == "Connected" {
+                return carrierUp ? (.green, "VPN connected") : (.orange, "VPN: waiting for the document…")
+            }
+            return (.orange, "VPN: \(vpn.status)")
+        }
+        if tunnel.running {
+            return tunnel.connected ? (.green, "Connected") : (.orange, "Connecting…")
+        }
+        return (.gray, "Stopped")
+    }
+
     private var statusHeader: some View {
         HStack {
             Circle()
-                .fill(tunnel.connected ? Color.green : (tunnel.running ? Color.orange : Color.gray))
+                .fill(headerState.color)
                 .frame(width: 12, height: 12)
-            Text(tunnel.connected ? "Connected" : (tunnel.running ? "Connecting…" : "Stopped"))
+            Text(headerState.text)
                 .font(.headline)
             Spacer()
         }
@@ -203,6 +232,23 @@ struct ContentView: View {
                 }
                 .onChange(of: tunnel.log) { _ in
                     withAnimation { proxy.scrollTo("logtail", anchor: .bottom) }
+                }
+            }
+            .frame(height: 240)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Text("VPN extension log").font(.caption).foregroundColor(.secondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(extLog.isEmpty ? "—" : extLog)
+                        .font(.system(.caption2, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .id("exttail")
+                }
+                .onChange(of: extLog) { _ in
+                    proxy.scrollTo("exttail", anchor: .bottom)
                 }
             }
             .frame(height: 240)

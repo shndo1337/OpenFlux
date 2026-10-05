@@ -17,6 +17,7 @@ targets:
     platform: iOS
     sources:
       - path: OpenFlux
+      - path: Shared
       - path: Lib
         buildPhase: none
     dependencies:
@@ -40,6 +41,8 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+        com.apple.security.application-groups:
+          - group.com.shndo1337.openfluxmail
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shndo1337.openfluxmail
@@ -69,6 +72,7 @@ targets:
     platform: iOS
     sources:
       - path: OpenFluxTunnel
+      - path: Shared
       - path: Lib
         buildPhase: none
     dependencies:
@@ -88,6 +92,8 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+        com.apple.security.application-groups:
+          - group.com.shndo1337.openfluxmail
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shndo1337.openfluxmail.tunnel
